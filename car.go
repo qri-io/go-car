@@ -69,6 +69,49 @@ func DefaultWalkFunc(nd format.Node) ([]*format.Link, error) {
 	return nd.Links(), nil
 }
 
+// OnlyCompleteRoots verifies all blocks for a slice of root CIDs are available
+// in the given NodeGetter, returning an order-preserved subset of roots
+func OnlyCompleteRoots(ctx context.Context, ds format.NodeGetter, roots []cid.Cid) ([]cid.Cid, error) {
+	seen := cid.NewSet()
+	delCh := make(chan *int)
+	walk := func(ctx context.Context, c cid.Cid) ([]*format.Link, error) {
+		nd, err := ds.Get(ctx, c)
+		if err != nil {
+			return nil, err
+		}
+		return nd.Links(), nil
+	}
+
+	for i, r := range roots {
+		go func(root cid.Cid, i int) {
+			if err := dag.Walk(ctx, walk, root, seen.Visit); err != nil {
+				delCh <- &i
+				return
+			}
+			delCh <- nil
+		}(r, i)
+	}
+
+	tasks := len(roots)
+	verifiedRoots := make([]cid.Cid, len(roots))
+	copy(verifiedRoots, roots)
+
+	for {
+		select {
+		case i := <-delCh:
+			if i != nil {
+				verifiedRoots = append(verifiedRoots[:*i], verifiedRoots[*i+1:]...)
+			}
+			tasks--
+			if tasks == 0 {
+				return verifiedRoots, nil
+			}
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+}
+
 func ReadHeader(br *bufio.Reader) (*CarHeader, error) {
 	hb, err := util.LdRead(br)
 	if err != nil {

@@ -160,3 +160,43 @@ func TestRoundtripSelective(t *testing.T) {
 		require.False(t, has)
 	}
 }
+
+func TestOnlyCompleteRoots(t *testing.T) {
+	sourceBserv := dstest.Bserv()
+	dserv := dag.NewDAGService(sourceBserv)
+
+	a := dag.NewRawNode([]byte("aaaa"))
+	b := dag.NewRawNode([]byte("bbbb"))
+	d := dag.NewRawNode([]byte("ddd"))
+	c := &dag.ProtoNode{}
+	c.AddNodeLink("d", d)
+
+	root1 := &dag.ProtoNode{}
+	root1.AddNodeLink("a", a)
+
+	root2 := &dag.ProtoNode{}
+	root2.AddNodeLink("a", a)
+	root2.AddNodeLink("b", b)
+
+	root3 := &dag.ProtoNode{}
+	root3.AddNodeLink("c", c)
+
+	assertAddNodes(t, dserv, a, b, d, c, root1, root2, root3)
+
+	ctx := context.Background()
+	roots := []cid.Cid{root1.Cid(), root2.Cid(), root3.Cid()}
+	expect := roots
+
+	got, err := OnlyCompleteRoots(ctx, dserv, roots)
+	require.NoError(t, err)
+	require.Equal(t, expect, got)
+
+	// remove block d, dserv now cannot complete root3
+	err = dserv.Remove(ctx, d.Cid())
+	require.NoError(t, err)
+
+	expect = []cid.Cid{root1.Cid(), root2.Cid()}
+	got, err = OnlyCompleteRoots(ctx, dserv, roots)
+	require.NoError(t, err)
+	require.Equal(t, expect, got)
+}
